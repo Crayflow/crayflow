@@ -1,0 +1,6 @@
+apiVersion: devops.crayflow.xyz/v1
+kind: Workflow
+metadata:
+  name: workflow-sample
+spec:
+  # TODO(user): Add fields here

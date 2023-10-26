@@ -1,0 +1,20 @@
+domain: crayflow.xyz
+layout:
+- go.kubebuilder.io/v3
+projectName: crayflow
+repo: github.com/buhuipao/crayflow
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: crayflow.xyz
+  group: devops
+  kind: Workflow
+  path: github.com/buhuipao/crayflow/api/v1
+  version: v1
+  webhooks:
+    defaulting: true
+    validation: true
+    webhookVersion: v1
+version: "3"
