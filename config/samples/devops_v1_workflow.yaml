@@ -4,3 +4,16 @@ metadata:
   name: workflow-sample
 spec:
   # TODO(user): Add fields here
+  creator: "buhuipao"
+  nodes:
+    - name: "step1"
+      timeout: 600
+      container:
+        name: "hello"
+        image: "docker/whalesay"
+        command: [ cowsay ]
+        args: [ "hello world" ]
+        resources: # limit the resources
+          limits:
+            memory: 32Mi
+            cpu: 100m

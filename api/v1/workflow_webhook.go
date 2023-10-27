@@ -17,6 +17,7 @@ limitations under the License.
 package v1
 
 import (
+	"errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -38,12 +39,26 @@ func (r *Workflow) SetupWebhookWithManager(mgr ctrl.Manager) error {
 
 var _ webhook.Defaulter = &Workflow{}
 
+const (
+	DefaultNodeTimeout   = 600
+	DefaultCreator       = "default"
+	DefaultWorkflowPhase = WorkflowPhasePending
+)
+
+var (
+	ErrNodesMustBeSpecified = errors.New("nodes must be specified")
+)
+
 // Default implements webhook.Defaulter so a webhook will be registered for the type
 func (r *Workflow) Default() {
 	workflowlog.Info("default", "name", r.Name)
 
+	if r.Spec.Creator == "" {
+		r.Spec.Creator = DefaultCreator
+	}
+
 	if r.Status.Phase == "" {
-		r.Status.Phase = WorkflowPhaseInitial
+		r.Status.Phase = DefaultWorkflowPhase
 	}
 
 	for i := range r.Spec.Nodes {
@@ -65,6 +80,10 @@ func (r *Workflow) ValidateCreate() error {
 	workflowlog.Info("validate create", "name", r.Name)
 
 	// TODO(user): fill in your validation logic upon object creation.
+	if len(r.Spec.Nodes) == 0 {
+		return ErrNodesMustBeSpecified
+	}
+
 	return nil
 }
 
@@ -73,6 +92,10 @@ func (r *Workflow) ValidateUpdate(old runtime.Object) error {
 	workflowlog.Info("validate update", "name", r.Name)
 
 	// TODO(user): fill in your validation logic upon object update.
+	if len(r.Spec.Nodes) == 0 {
+		return ErrNodesMustBeSpecified
+	}
+
 	return nil
 }
 

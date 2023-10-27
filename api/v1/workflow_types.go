@@ -37,14 +37,17 @@ type WorkflowSpec struct {
 
 	Creator string `json:"creator,omitempty"`
 	// +optional
-	Description string                 `json:"description,omitempty"`
-	Nodes       []WorkflowNodeSpec     `json:"nodes,omitempty"`
-	Vars        []WorkflowVariableSpec `json:"variables,omitempty"`
+	Description string             `json:"description,omitempty"`
+	Nodes       []WorkflowNodeSpec `json:"nodes,omitempty"`
+	// +optional
+	Vars []WorkflowVariableSpec `json:"variables,omitempty"`
 	// if user wants to restart the workflow, can set this field to name of some nodes,
 	// controller will run the workflow from those nodes, after process,
 	// controller will reset this field to be empty
+	// +optional
 	Resets []string `json:"resets,omitempty"`
-	Clear  bool     `json:"clear,omitempty"`
+	// +optional
+	Clear bool `json:"clear,omitempty"`
 }
 
 type WorkflowVariableSpec struct {
@@ -60,27 +63,24 @@ type WorkflowNodeSpec struct {
 	Container *v1.Container `json:"container,omitempty"`
 }
 
-const DefaultNodeTimeout = time.Minute * 10
-
 // WorkflowPhase is the workflow phase
 // +enum
 type WorkflowPhase string
 
 const (
-	WorkflowPhaseInitial WorkflowPhase = "Initial"
-	WorkflowPhaseSuccess WorkflowPhase = "Success"
+	WorkflowPhasePending WorkflowPhase = "Pending"
 	WorkflowPhaseRunning WorkflowPhase = "Running"
 	WorkflowPhaseFailed  WorkflowPhase = "Failed"
+	WorkflowPhaseSuccess WorkflowPhase = "Success"
 )
 
 type NodePhase string
 
 const (
-	WorkflowNodePhaseInitial NodePhase = "Initial"
-	NodePhaseSuccess         NodePhase = "Success"
-	NodePhaseRunning         NodePhase = "Running"
-	NodePhaseFailed          NodePhase = "Failed"
-	NodePhaseTimeout         NodePhase = "Timeout"
+	NodePhaseRunning NodePhase = "Running"
+	NodePhaseFailed  NodePhase = "Failed"
+	NodePhaseTimeout NodePhase = "Timeout"
+	NodePhaseSuccess NodePhase = "Success"
 )
 
 var (
@@ -89,11 +89,11 @@ var (
 )
 
 type WorkflowNodeStatus struct {
-	Name      string    `json:"name,omitempty"`
-	Phase     NodePhase `json:"phase,omitempty"`
-	Reason    string    `json:"reason,omitempty"`
-	Message   string    `json:"message,omitempty"`
-	Container *v1.Pod   `json:"container,omitempty"`
+	Name     string    `json:"name,omitempty"`
+	Phase    NodePhase `json:"phase,omitempty"`
+	Reason   string    `json:"reason,omitempty"`
+	Message  string    `json:"message,omitempty"`
+	Workload *v1.Pod   `json:"container,omitempty"`
 	// Plugin    runtime.RawExtension `json:"plugin,omitempty"`
 }
 
@@ -110,6 +110,7 @@ type WorkflowStatus struct {
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
+//+kubebuilder:printcolumn:JSONPath=".status.phase",name=Phase,type=string
 //+kubebuilder:printcolumn:JSONPath=".status.runningNodes",name=RunningNodes,type=string
 
 // Workflow is the Schema for the workflows API
