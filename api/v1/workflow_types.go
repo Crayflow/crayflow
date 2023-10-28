@@ -27,6 +27,35 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// WorkflowPhase is the workflow phase
+// +enum
+type WorkflowPhase string
+
+const (
+	WorkflowPhasePending WorkflowPhase = "Pending"
+	WorkflowPhaseRunning WorkflowPhase = "Running"
+	WorkflowPhaseFailed  WorkflowPhase = "Failed"
+	WorkflowPhaseSuccess WorkflowPhase = "Success"
+)
+
+// NodePhase is the node phase
+// +enum
+type NodePhase string
+
+const (
+	NodePhaseRunning NodePhase = "Running"
+	NodePhaseFailed  NodePhase = "Failed"
+	NodePhaseTimeout NodePhase = "Timeout"
+	NodePhaseSuccess NodePhase = "Success"
+)
+
+var (
+	ErrWorkflowMissingNode = errors.New("workflow missing node")
+	ErrWorkflowHasCycle    = errors.New("workflow has cycle")
+	ErrNodeNotFound        = errors.New("node not found")
+	ErrNodeTimeout         = errors.New("node timeout")
+)
+
 // WorkflowSpec defines the desired state of Workflow
 type WorkflowSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
@@ -63,38 +92,25 @@ type WorkflowNodeSpec struct {
 	Container *v1.Container `json:"container,omitempty"`
 }
 
-// WorkflowPhase is the workflow phase
-// +enum
-type WorkflowPhase string
-
-const (
-	WorkflowPhasePending WorkflowPhase = "Pending"
-	WorkflowPhaseRunning WorkflowPhase = "Running"
-	WorkflowPhaseFailed  WorkflowPhase = "Failed"
-	WorkflowPhaseSuccess WorkflowPhase = "Success"
-)
-
-type NodePhase string
-
-const (
-	NodePhaseRunning NodePhase = "Running"
-	NodePhaseFailed  NodePhase = "Failed"
-	NodePhaseTimeout NodePhase = "Timeout"
-	NodePhaseSuccess NodePhase = "Success"
-)
-
-var (
-	ErrWorkflowHasCycle = errors.New("workflow has cycle")
-	ErrNodeNotFound     = errors.New("node not found")
-)
-
 type WorkflowNodeStatus struct {
-	Name     string    `json:"name,omitempty"`
-	Phase    NodePhase `json:"phase,omitempty"`
-	Reason   string    `json:"reason,omitempty"`
-	Message  string    `json:"message,omitempty"`
-	Workload *v1.Pod   `json:"container,omitempty"`
+	Name      string        `json:"name,omitempty"`
+	Phase     NodePhase     `json:"phase,omitempty"`
+	Reason    string        `json:"reason,omitempty"`
+	Message   string        `json:"message,omitempty"`
+	StartTime string        `json:"startTime,omitempty"`
+	EndTime   string        `json:"endTime,omitempty"`
+	Workload  *NodeWorkload `json:"workload,omitempty"`
 	// Plugin    runtime.RawExtension `json:"plugin,omitempty"`
+}
+
+type NodeWorkload struct {
+	Name      string      `json:"name,omitempty"`
+	Namespace string      `json:"namespace,omitempty"`
+	Phase     v1.PodPhase `json:"phase,omitempty"`
+	// +optional
+	Message string `json:"message,omitempty"`
+	// +optional
+	Reason string `json:"reason,omitempty"`
 }
 
 // WorkflowStatus defines the observed state of Workflow
@@ -106,6 +122,7 @@ type WorkflowStatus struct {
 	Message      string               `json:"message,omitempty"`
 	RunningNodes []string             `json:"runningNodes,omitempty"`
 	Nodes        []WorkflowNodeStatus `json:"nodes,omitempty"`
+	HistoryNodes []WorkflowNodeStatus `json:"historyNodes,omitempty"`
 }
 
 //+kubebuilder:object:root=true

@@ -15,8 +15,8 @@ limitations under the License.
 */
 
 // Package v1 contains API Schema definitions for the devops v1 API group
-//+kubebuilder:object:generate=true
-//+groupName=devops.crayflow.xyz
+// +kubebuilder:object:generate=true
+// +groupName=devops.crayflow.xyz
 package v1
 
 import (

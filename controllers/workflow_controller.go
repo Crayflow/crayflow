@@ -62,8 +62,8 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	logger := log.FromContext(ctx)
 
 	// TODO(user): your logic here
-	var workflow devopsv1.Workflow
-	if err := r.Get(ctx, req.NamespacedName, &workflow); err != nil {
+	workflow := &devopsv1.Workflow{}
+	if err := r.Get(ctx, req.NamespacedName, workflow); err != nil {
 		if apierrors.IsNotFound(err) {
 			logger.Error(err, "unable to get Workflow")
 		}
@@ -72,31 +72,35 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	// OnDelete
 	if !workflow.DeletionTimestamp.IsZero() {
 		// workflow onDelete
-		return r.ProcessOnDelete(ctx, &workflow)
+		return r.ProcessOnDelete(ctx, workflow)
 	}
 
 	// check whether the workflow has a finalizer flag
 	if len(workflow.Finalizers) == 0 {
 		workflow.Finalizers = append(workflow.Finalizers, WorkflowFinalizerName)
-		if err := r.Update(ctx, &workflow); err != nil {
+		if err := r.Update(ctx, workflow); err != nil {
 			return ctrl.Result{}, err
 		}
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	if workflow.Status.Phase == "" {
+		r.Eventer.Event(workflow, v1.EventTypeNormal, "Initial", "Initial workflow phase")
 		workflow.Status.Phase = devopsv1.DefaultWorkflowPhase
 	}
 
 	// update to 'running' status
 	if workflow.Status.Phase == devopsv1.WorkflowPhasePending {
+		r.Eventer.Event(workflow, v1.EventTypeNormal, "Schedule", "Update workflow phase to 'Running'")
 		workflow.Status.Phase = devopsv1.WorkflowPhaseRunning
 	}
 
 	// check cycle
-	if CheckCycle(&workflow) {
+	if workflow.CheckCycle() {
+		r.Eventer.Event(workflow, v1.EventTypeWarning, "FoundCycle", "Update workflow phase to 'Failed'")
 		workflow.Status.Phase = devopsv1.WorkflowPhaseFailed
 		workflow.Status.Reason, workflow.Status.Message = devopsv1.ErrWorkflowHasCycle.Error(), "workflow has cycle"
-		if err := r.Update(ctx, &workflow); err != nil {
+		if err := r.Status().Update(ctx, workflow); err != nil {
 			logger.Error(err, "update workflow failed")
 			return ctrl.Result{Requeue: true}, err
 		}
@@ -106,19 +110,19 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	// OnUpdate
 	// if .Spec.Resets field changed, and the controller will re-run nodes that are in .Spec.Resets field
 	if len(workflow.Spec.Resets) != 0 {
-		return r.ProcessReset(ctx, &workflow)
+		return r.ProcessReset(ctx, workflow)
 	}
 
 	// workflow OnCreate or OnSchedule
-	runningNodes := FindWorkflowRunningNodes(ctx, &workflow)
+	runningNodes := workflow.FindWorkflowRunningNodes()
 	// process running nodes
-	if err := r.ProcessWorkflowRunningNodes(ctx, &workflow, runningNodes); err != nil {
+	if err := r.ProcessWorkflowRunningNodes(ctx, workflow, runningNodes); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	readyNodes := FindWorkflowReadyNodes(ctx, &workflow)
+	readyNodes := workflow.FindWorkflowReadyNodes()
 	// trigger ready nodes
-	if err := r.ProcessWorkflowReadyNodes(ctx, &workflow, readyNodes); err != nil {
+	if err := r.ProcessWorkflowReadyNodes(ctx, workflow, readyNodes); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -126,19 +130,21 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	for i := range workflow.Status.Nodes {
 		node := workflow.Status.Nodes[i]
 		if node.Phase == devopsv1.NodePhaseFailed || node.Phase == devopsv1.NodePhaseTimeout {
+			r.Eventer.Event(workflow, v1.EventTypeWarning, "NodeException", fmt.Sprintf("Node %s exception, update workflow to 'Failed'", node.Name))
 			workflow.Status.Phase = devopsv1.WorkflowPhaseFailed
 		}
 	}
 
 	// update the workflow to end state
-	if len(runningNodes) == 0 && len(readyNodes) == 0 && workflow.Status.Phase != devopsv1.WorkflowPhaseFailed {
+	if len(runningNodes) == 0 && len(readyNodes) == 0 && workflow.Status.Phase == devopsv1.WorkflowPhaseRunning {
+		r.Eventer.Event(workflow, v1.EventTypeNormal, "ScheduleFinish", "All nodes finish, update phase to 'Success'")
 		workflow.Status.Phase = devopsv1.WorkflowPhaseSuccess
 	}
-	if err := r.Update(ctx, &workflow); err != nil {
-		logger.Error(err, fmt.Sprintf("update workflow failed"))
+	if err := r.Status().Update(ctx, workflow); err != nil {
+		logger.Error(err, "update workflow failed in reconcile")
 		return ctrl.Result{}, err
 	}
-	logger.Info(fmt.Sprintf("update workflow status succeeded"))
+	logger.Info("update workflow status succeeded in reconcile")
 
 	return ctrl.Result{}, nil
 }
@@ -146,7 +152,7 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 func (r *WorkflowReconciler) ProcessOnDelete(ctx context.Context, workflow *devopsv1.Workflow) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	if len(workflow.Finalizers) != 0 && workflow.Finalizers[0] == WorkflowFinalizerName {
-		// record the finalizer evnet
+		// record the finalizer event
 		r.Eventer.Event(workflow, "delete", "some reason", "remove finalizer flag")
 
 		// do something with the finalizers, such as delete the running resource of the workflow
@@ -168,38 +174,39 @@ func (r *WorkflowReconciler) ProcessOnDelete(ctx context.Context, workflow *devo
 func (r *WorkflowReconciler) ProcessReset(ctx context.Context, workflow *devopsv1.Workflow) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	nodes := workflow.Spec.Resets
-
 	if workflow.Spec.Clear {
-		var err error
-		nodes, err = FindPostNodes(workflow, nodes)
-		if err != nil && err != devopsv1.ErrWorkflowHasCycle {
-			logger.Error(err, "find workflow post nodes when clear", "resetNodes", workflow.Spec.Resets)
-			return ctrl.Result{}, err
-		}
-		if err == devopsv1.ErrWorkflowHasCycle {
-			logger.Error(err, "workflow has cycle, update to 'failed' status")
-			workflow.Status.Phase = devopsv1.WorkflowPhaseFailed
-			if err := r.Update(ctx, workflow); err != nil {
-				logger.Error(err, "update workflow failed")
-			}
-			logger.Info("updated workflow to 'failed' status successfully")
-			return ctrl.Result{}, nil
-		}
+		nodes = workflow.FindPostNodes(nodes)
 	}
 
 	// remove node status
 	for i := range nodes {
 		logger.Info("removing node status", "node", nodes[i])
-		RemoveWorkflowNodeStatus(workflow, nodes[i])
+		workflow.RemoveWorkflowNodeStatus(nodes[i])
 	}
-	workflow.Spec.Resets, workflow.Spec.Clear = nil, false
 	workflow.Status.Phase = devopsv1.WorkflowPhaseRunning
-	if err := r.Update(ctx, workflow); err != nil {
-		logger.Error(err, "update workflow failed")
+	r.Eventer.Event(workflow, v1.EventTypeNormal, "Reset", "Update phase to 'Running'")
+	if err := r.Status().Update(ctx, workflow); err != nil {
+		logger.Error(err, "update workflow failed in process reset")
 	}
 	logger.Info("updated workflow to 'running' status successfully")
 
-	return ctrl.Result{Requeue: true}, nil
+	// update resets and clear flag
+	if err := r.Get(ctx, types.NamespacedName{
+		Namespace: workflow.Namespace,
+		Name:      workflow.Name,
+	}, workflow); err != nil {
+		logger.Error(err, "get workflow new version failed in process reset")
+		return ctrl.Result{Requeue: true}, err
+	}
+	workflow.Spec.Resets, workflow.Spec.Clear = nil, false
+	r.Eventer.Event(workflow, v1.EventTypeNormal, "Reset", "Clean 'Resets'")
+	if err := r.Update(ctx, workflow); err != nil {
+		logger.Error(err, "clean workflow resets failed")
+		return ctrl.Result{}, err
+	}
+	logger.Info("clean workflow resets successfully")
+
+	return ctrl.Result{}, nil
 }
 
 func (r *WorkflowReconciler) ProcessWorkflowRunningNodes(ctx context.Context, workflow *devopsv1.Workflow,
@@ -220,7 +227,7 @@ func (r *WorkflowReconciler) ProcessWorkflowRunningNodes(ctx context.Context, wo
 		if nodeSpec == nil {
 			logger.Error(devopsv1.ErrNodeNotFound, "not found spec of running node", "node", node.Name)
 			// clean this running node, remove node status
-			RemoveWorkflowNodeStatus(workflow, node.Name)
+			workflow.RemoveWorkflowNodeStatus(node.Name)
 			continue
 		}
 
@@ -232,59 +239,56 @@ func (r *WorkflowReconciler) ProcessWorkflowRunningNodes(ctx context.Context, wo
 			if err != nil {
 				return err
 			}
-			nodeStatus = &devopsv1.WorkflowNodeStatus{
-				Name:     node.Name,
-				Phase:    devopsv1.NodePhaseRunning,
-				Workload: pod,
-			}
-			UpdateWorkflowNodeStatus(workflow, nodeStatus)
+			nodeStatus = GenerateNodeStatusWithWorkload(node.Name, pod)
+			workflow.UpdateWorkflowNodeStatus(nodeStatus)
 			continue
 		}
 
 		// check workload status
 		var pod v1.Pod
-		err := r.Get(ctx, types.NamespacedName{Namespace: node.Workload.Namespace, Name: node.Workload.Name}, &pod)
-		if err != nil && !apierrors.IsNotFound(err) {
-			logger.Error(err, "get node status pod failed", "node", node.Name)
+		var err error
+		logger.Info("getting workload of node", "node", node.Name, "workload", node.Workload.Name)
+		if err = r.Get(ctx, types.NamespacedName{Namespace: node.Workload.Namespace, Name: node.Workload.Name},
+			&pod); err != nil && !apierrors.IsNotFound(err) {
+			logger.Error(err, "get workload of node failed", "node", node.Name)
 			return err
 		}
 		if apierrors.IsNotFound(err) {
-			logger.Info("workload of node has been deleted, creating for it", "node", node.Name)
+			logger.Info("workload of node has been deleted, creating workload for it",
+				"node", node.Name, "workload", node.Workload.Name)
 			pod, err := r.createWorkloadForNode(ctx, workflow, node.Name)
 			if err != nil {
 				return err
 			}
-			nodeStatus = &devopsv1.WorkflowNodeStatus{
-				Name:     node.Name,
-				Phase:    devopsv1.NodePhaseRunning,
-				Workload: pod,
-			}
+			nodeStatus = GenerateNodeStatusWithWorkload(node.Name, pod)
 		} else {
-			logger.Info("get workload of node successfully", "node", node.Name)
-			nodeStatus = &devopsv1.WorkflowNodeStatus{
-				Name:     node.Name,
-				Workload: &pod,
-			}
+			logger.Info("get workload of node successfully", "node", node.Name,
+				"workload", node.Workload.Name, "workload.Phase", pod.Status.Phase)
+			nodeStatus = GenerateNodeStatusWithWorkload(node.Name, &pod)
 			switch pod.Status.Phase {
 			case v1.PodPending, v1.PodRunning:
 				nodeStatus.Phase = devopsv1.NodePhaseRunning
 			case v1.PodFailed:
+				r.Eventer.Event(workflow, v1.EventTypeWarning, "WorkloadFailed", fmt.Sprintf("Update node %s to 'Failed'", node.Name))
 				nodeStatus.Phase = devopsv1.NodePhaseFailed
-				nodeStatus.Reason = "pod failed"
+				nodeStatus.Reason, nodeStatus.EndTime = "pod failed", time.Now().String()
 			case v1.PodSucceeded:
+				r.Eventer.Event(workflow, v1.EventTypeNormal, "WorkloadSuccess", fmt.Sprintf("Update node %s to 'Success'", node.Name))
 				nodeStatus.Phase = devopsv1.NodePhaseSuccess
-				nodeStatus.Reason = "pod succeeded"
+				nodeStatus.Reason, nodeStatus.EndTime = "pod succeeded", time.Now().String()
 			default:
 				nodeStatus.Phase = devopsv1.NodePhaseRunning
 			}
 			// check timeout
 			if nodeStatus.Phase == devopsv1.NodePhaseRunning &&
 				pod.CreationTimestamp.Add(nodeSpec.Timeout*time.Second).Before(time.Now()) {
-				nodeStatus.Phase = devopsv1.NodePhaseTimeout
+				logger.Error(devopsv1.ErrNodeTimeout, "workload of node timeout")
+				r.Eventer.Event(workflow, v1.EventTypeWarning, "WorkloadTimeout", fmt.Sprintf("Update node %s to 'Timeout'", node.Name))
+				nodeStatus.Phase, nodeStatus.EndTime = devopsv1.NodePhaseTimeout, time.Now().String()
 			}
 		}
 
-		UpdateWorkflowNodeStatus(workflow, nodeStatus)
+		workflow.UpdateWorkflowNodeStatus(nodeStatus)
 	}
 
 	return nil
@@ -295,29 +299,41 @@ func (r *WorkflowReconciler) ProcessWorkflowReadyNodes(ctx context.Context, work
 	logger := log.FromContext(ctx)
 	for i := range readyNodes {
 		node := readyNodes[i]
+		logger.Info("creating workload for ready node", "node", node.Name)
 		pod, err := r.createWorkloadForNode(ctx, workflow, node.Name)
 		if err != nil {
+			logger.Error(err, "created workload of node failed", "node", node.Name)
 			return err
 		}
 
-		logger.Info("created pod succeeded", "node", node.Name)
-		nodeStatus := &devopsv1.WorkflowNodeStatus{
-			Name:     node.Name,
-			Phase:    devopsv1.NodePhaseRunning,
-			Message:  "created pod succeeded",
-			Workload: pod,
-		}
+		logger.Info("created workload succeeded", "node", node.Name, "workload", pod.Name)
+		nodeStatus := GenerateNodeStatusWithWorkload(node.Name, pod)
+		logger.Info(fmt.Sprintf("update node status"), "node", node.Name,
+			"status", nodeStatus.Phase)
+		workflow.UpdateWorkflowNodeStatus(nodeStatus)
 
-		logger.Info(fmt.Sprintf("update node status"), "node", node.Name, "status", nodeStatus)
-		UpdateWorkflowNodeStatus(workflow, nodeStatus)
-
-		// update the workflow status to running
-		if workflow.Status.Phase != devopsv1.WorkflowPhaseFailed {
-			workflow.Status.Phase = devopsv1.WorkflowPhaseRunning
-		}
+		r.Eventer.Event(workflow, v1.EventTypeNormal, "ScheduleNode", fmt.Sprintf("Schedule node %s", node.Name))
+		workflow.Status.Phase = devopsv1.WorkflowPhaseRunning
 	}
 
 	return nil
+}
+
+// GenerateNodeStatusWithWorkload ...
+func GenerateNodeStatusWithWorkload(nodeName string, pod *v1.Pod) *devopsv1.WorkflowNodeStatus {
+	return &devopsv1.WorkflowNodeStatus{
+		Name:      nodeName,
+		Phase:     devopsv1.NodePhaseRunning,
+		Message:   "created pod succeeded",
+		StartTime: time.Now().String(),
+		Workload: &devopsv1.NodeWorkload{
+			Name:      pod.Name,
+			Namespace: pod.Namespace,
+			Phase:     pod.Status.Phase,
+			Message:   pod.Status.Message,
+			Reason:    pod.Status.Reason,
+		},
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -344,9 +360,12 @@ func (r *WorkflowReconciler) createWorkloadForNode(ctx context.Context, workflow
 		return nil, devopsv1.ErrNodeNotFound
 	}
 
+	if node.Container.Name == "" {
+		node.Container.Name = "workload"
+	}
 	pod := v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: fmt.Sprintf("crayflow-%s-%s", workflow.Name, node.Name),
+			GenerateName: fmt.Sprintf("crayflow-%s-%s-", workflow.Name, node.Name),
 			Labels: map[string]string{
 				"crayflow/workflow": workflow.Name,
 				"crayflow/node":     node.Name,
@@ -354,7 +373,8 @@ func (r *WorkflowReconciler) createWorkloadForNode(ctx context.Context, workflow
 			Namespace: workflow.Namespace,
 		},
 		Spec: v1.PodSpec{
-			Containers: []v1.Container{*node.Container},
+			Containers:    []v1.Container{*node.Container},
+			RestartPolicy: v1.RestartPolicyNever,
 		},
 	}
 	if err := controllerutil.SetOwnerReference(workflow, &pod, r.Scheme); err != nil {
@@ -362,136 +382,14 @@ func (r *WorkflowReconciler) createWorkloadForNode(ctx context.Context, workflow
 		return nil, err
 	}
 
+	logger.Info("creating workload for node", "node", node.Name)
+	r.Eventer.Event(workflow, v1.EventTypeNormal, "CreateWorkload", fmt.Sprintf("Create workload for node %s", node.Name))
 	if err := r.Create(ctx, &pod); err != nil {
-		logger.Error(err, "create pod failed", "node", node.Name)
+		logger.Error(err, "create workload for node failed", "node", node.Name)
 		return nil, err
 	}
 
+	logger.Info("created workload for node successfully", "node", node.Name, "workload", pod.Name)
+
 	return &pod, nil
-}
-
-/*
----------------------------------------------------------------- workflow logic --------------------------------
-*/
-
-func FindPostNodes(workflow *devopsv1.Workflow, curNodes []string) ([]string, error) {
-	// check cycle
-	if CheckCycle(workflow) {
-		return nil, devopsv1.ErrWorkflowHasCycle
-	}
-
-	// build node outgoings
-	nodeOutgoings := make(map[string][]string, len(workflow.Spec.Nodes))
-	for i := range workflow.Spec.Nodes {
-		node := workflow.Spec.Nodes[i]
-		nodeOutgoings[node.Name] = make([]string, 0)
-		for j := range node.Dependencies {
-			if _, ok := nodeOutgoings[node.Dependencies[j]]; !ok {
-				nodeOutgoings[node.Dependencies[j]] = make([]string, 0)
-			}
-			nodeOutgoings[node.Dependencies[j]] = append(nodeOutgoings[node.Dependencies[j]], node.Name)
-		}
-	}
-
-	// visit the dag
-	queue := curNodes
-	visited := make(map[string]bool, len(curNodes))
-	var node string
-	var nodes []string
-	for len(queue) != 0 {
-		node, queue = queue[0], queue[1:]
-		if !visited[node] {
-			nodes = append(nodes, node)
-			queue = append(queue, nodeOutgoings[node]...)
-		}
-		visited[node] = true
-	}
-
-	return nodes, nil
-}
-
-func FindWorkflowRunningNodes(ctx context.Context, workflow *devopsv1.Workflow) []devopsv1.WorkflowNodeStatus {
-	var nodes []devopsv1.WorkflowNodeStatus
-	for i := range workflow.Status.Nodes {
-		node := workflow.Status.Nodes[i]
-		if node.Phase == devopsv1.NodePhaseRunning {
-			nodes = append(nodes, node)
-		}
-	}
-
-	return nodes
-}
-
-func FindWorkflowReadyNodes(ctx context.Context, workflow *devopsv1.Workflow) []devopsv1.WorkflowNodeSpec {
-	// build status mapping relationships
-	node2Status := make(map[string]*devopsv1.WorkflowNodeStatus, len(workflow.Status.Nodes))
-	for i := range workflow.Status.Nodes {
-		node := workflow.Status.Nodes[i]
-		node2Status[node.Name] = &node
-	}
-
-	// find ready nodes
-	var nodes []devopsv1.WorkflowNodeSpec
-	for i := range workflow.Spec.Nodes {
-		node := workflow.Spec.Nodes[i]
-		ready := true
-		for j := range node.Dependencies {
-			nodeStatus, ok := node2Status[node.Dependencies[j]]
-			// Feature: here can support more strategies, but not now
-			if !ok || nodeStatus.Phase != devopsv1.NodePhaseSuccess {
-				ready = false
-				break
-			}
-		}
-		if ready {
-			nodes = append(nodes, node)
-		}
-	}
-
-	return nodes
-}
-
-func UpdateWorkflowNodeStatus(workflow *devopsv1.Workflow, nodeStatus *devopsv1.WorkflowNodeStatus) {
-	if nodeStatus == nil {
-		return
-	}
-
-	// replace the history node status or append new node status
-	var updated bool
-	for i := len(workflow.Status.Nodes) - 1; i >= 0; i-- {
-		n := workflow.Status.Nodes[i]
-		if n.Name == nodeStatus.Name {
-			workflow.Status.Nodes[i] = *nodeStatus
-			updated = true
-			break
-		}
-	}
-
-	if !updated {
-		workflow.Status.Nodes = append(workflow.Status.Nodes, *nodeStatus)
-	}
-}
-
-// RemoveWorkflowNodeStatus ...
-func RemoveWorkflowNodeStatus(workflow *devopsv1.Workflow, nodeName string) {
-	l, r := 0, len(workflow.Status.Nodes)-1
-	for l <= r {
-		for l <= r && workflow.Status.Nodes[l].Name == nodeName {
-			workflow.Status.Nodes[l], workflow.Status.Nodes[r] = workflow.Status.Nodes[r], workflow.Status.Nodes[l]
-			r--
-		}
-		if l > r {
-			break
-		}
-		l++
-	}
-
-	workflow.Status.Nodes = workflow.Status.Nodes[:l]
-}
-
-// CheckCycle ...
-func CheckCycle(workflow *devopsv1.Workflow) bool {
-	// TODO: find node by dag
-
-	return false
 }
