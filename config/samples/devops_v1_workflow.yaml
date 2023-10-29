@@ -1,13 +1,10 @@
 apiVersion: devops.crayflow.xyz/v1
 kind: Workflow
 metadata:
-  name: workflow-sample
+  name: sample
 spec:
   # TODO(user): Add fields here
-  creator: "buhuipao"
-  resets:
-    - "step1"
-  clear: true
+  # creator: "buhuipao"
   nodes:
     - name: "step1"
       timeout: 600

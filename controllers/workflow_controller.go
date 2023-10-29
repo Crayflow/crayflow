@@ -26,10 +26,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"reflect"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"time"
 )
 
@@ -65,7 +68,7 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	workflow := &devopsv1.Workflow{}
 	if err := r.Get(ctx, req.NamespacedName, workflow); err != nil {
 		if apierrors.IsNotFound(err) {
-			logger.Error(err, "unable to get Workflow")
+			logger.Info("Workflow was deleted")
 		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -81,18 +84,26 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		if err := r.Update(ctx, workflow); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{}, nil
 	}
 
 	if workflow.Status.Phase == "" {
-		r.Eventer.Event(workflow, v1.EventTypeNormal, "Initial", "Initial workflow phase")
-		workflow.Status.Phase = devopsv1.DefaultWorkflowPhase
+		r.Eventer.Event(workflow, v1.EventTypeNormal, "Initial", "Initial workflow phase, update to 'Pending'")
+		workflow.Status.Phase, workflow.Status.Total = devopsv1.DefaultWorkflowPhase, len(workflow.Spec.Nodes)
+		if err := r.Status().Update(ctx, workflow); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	// update to 'running' status
 	if workflow.Status.Phase == devopsv1.WorkflowPhasePending {
 		r.Eventer.Event(workflow, v1.EventTypeNormal, "Schedule", "Update workflow phase to 'Running'")
-		workflow.Status.Phase = devopsv1.WorkflowPhaseRunning
+		workflow.Status.Phase, workflow.Status.Total = devopsv1.WorkflowPhaseRunning, len(workflow.Spec.Nodes)
+		if err := r.Status().Update(ctx, workflow); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	// check cycle
@@ -102,7 +113,7 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		workflow.Status.Reason, workflow.Status.Message = devopsv1.ErrWorkflowHasCycle.Error(), "workflow has cycle"
 		if err := r.Status().Update(ctx, workflow); err != nil {
 			logger.Error(err, "update workflow failed")
-			return ctrl.Result{Requeue: true}, err
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	}
@@ -112,6 +123,8 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if len(workflow.Spec.Resets) != 0 {
 		return r.ProcessReset(ctx, workflow)
 	}
+	workflow.Status.Clear, workflow.Status.Resets = false, nil
+	workflow.Status.Total = len(workflow.Spec.Nodes)
 
 	// workflow OnCreate or OnSchedule
 	runningNodes := workflow.FindWorkflowRunningNodes()
@@ -125,6 +138,7 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.ProcessWorkflowReadyNodes(ctx, workflow, readyNodes); err != nil {
 		return ctrl.Result{}, err
 	}
+	workflow.Status.RunningCount = len(runningNodes) + len(readyNodes)
 
 	// check node status then update workflow status
 	for i := range workflow.Status.Nodes {
@@ -156,15 +170,28 @@ func (r *WorkflowReconciler) ProcessOnDelete(ctx context.Context, workflow *devo
 		r.Eventer.Event(workflow, "delete", "some reason", "remove finalizer flag")
 
 		// do something with the finalizers, such as delete the running resource of the workflow
-		logger.Info("do something with the finalizers, and set the finalizers to empty")
-		// do something ...
+		logger.Info("delete workloads of nodes, then set the finalizers to empty")
+		// delete workload of nodes
+		nodes := append(workflow.Status.HistoryNodes, workflow.Status.Nodes...)
+		for i := range nodes {
+			if nodes[i].Workload != nil {
+				obj := v1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      nodes[i].Workload.Name,
+						Namespace: nodes[i].Workload.Namespace,
+					},
+				}
+				logger.Info("delete workload of node", "node", nodes[i].Name, "workload", obj)
+				_ = r.Delete(ctx, &obj)
+			}
+		}
 
 		workflow.Finalizers = workflow.Finalizers[:len(workflow.Finalizers)-1]
 		if err := r.Update(ctx, workflow); err != nil {
 			return ctrl.Result{}, err
 		}
 
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{}, nil
 	}
 
 	// workflow real deleted
@@ -173,39 +200,46 @@ func (r *WorkflowReconciler) ProcessOnDelete(ctx context.Context, workflow *devo
 
 func (r *WorkflowReconciler) ProcessReset(ctx context.Context, workflow *devopsv1.Workflow) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	nodes := workflow.Spec.Resets
-	if workflow.Spec.Clear {
-		nodes = workflow.FindPostNodes(nodes)
+	var changed bool
+	if !reflect.DeepEqual(workflow.Status.Resets, workflow.Spec.Resets) {
+		logger.Info("'resets' has changed", "old", workflow.Status.Resets, "new", workflow.Spec.Resets)
+		changed = true
+	}
+	if workflow.Status.Clear != workflow.Spec.Clear {
+		logger.Info("'clear' has changed", "old", workflow.Status.Clear, "new", workflow.Spec.Clear)
+		changed = true
+	}
+	// remove node status and change workflow status
+	// copy 'resets' and 'clear' to status
+	if changed {
+		nodes := workflow.Spec.Resets
+		if workflow.Spec.Clear {
+			nodes = workflow.FindPostNodes(nodes)
+		}
+		for i := range nodes {
+			logger.Info("removing node status", "node", nodes[i])
+			workflow.RemoveWorkflowNodeStatus(nodes[i])
+		}
+		workflow.Status.Total = len(workflow.Spec.Nodes)
+		workflow.Status.Phase = devopsv1.WorkflowPhaseRunning
+		workflow.Status.Resets, workflow.Status.Clear = workflow.Spec.Resets, workflow.Spec.Clear
+		r.Eventer.Event(workflow, v1.EventTypeNormal, "Reset", "Update phase to 'Running'")
+		if err := r.Status().Update(ctx, workflow); err != nil {
+			logger.Error(err, "update workflow failed in process reset")
+			return ctrl.Result{}, nil
+		}
+		logger.Info("updated workflow to 'running' status successfully in process reset")
+		return ctrl.Result{}, nil
 	}
 
-	// remove node status
-	for i := range nodes {
-		logger.Info("removing node status", "node", nodes[i])
-		workflow.RemoveWorkflowNodeStatus(nodes[i])
-	}
-	workflow.Status.Phase = devopsv1.WorkflowPhaseRunning
-	r.Eventer.Event(workflow, v1.EventTypeNormal, "Reset", "Update phase to 'Running'")
-	if err := r.Status().Update(ctx, workflow); err != nil {
-		logger.Error(err, "update workflow failed in process reset")
-	}
-	logger.Info("updated workflow to 'running' status successfully")
-
-	// update resets and clear flag
-	if err := r.Get(ctx, types.NamespacedName{
-		Namespace: workflow.Namespace,
-		Name:      workflow.Name,
-	}, workflow); err != nil {
-		logger.Error(err, "get workflow new version failed in process reset")
-		return ctrl.Result{Requeue: true}, err
-	}
+	// clean resets and clear flag
 	workflow.Spec.Resets, workflow.Spec.Clear = nil, false
 	r.Eventer.Event(workflow, v1.EventTypeNormal, "Reset", "Clean 'Resets'")
 	if err := r.Update(ctx, workflow); err != nil {
 		logger.Error(err, "clean workflow resets failed")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, nil
 	}
 	logger.Info("clean workflow resets successfully")
-
 	return ctrl.Result{}, nil
 }
 
@@ -336,14 +370,6 @@ func GenerateNodeStatusWithWorkload(nodeName string, pod *v1.Pod) *devopsv1.Work
 	}
 }
 
-// SetupWithManager sets up the controller with the Manager.
-func (r *WorkflowReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&devopsv1.Workflow{}).
-		Owns(&v1.Pod{}).
-		Complete(r)
-}
-
 func (r *WorkflowReconciler) createWorkloadForNode(ctx context.Context, workflow *devopsv1.Workflow, nodeName string) (
 	*v1.Pod, error) {
 	logger := log.FromContext(ctx)
@@ -392,4 +418,25 @@ func (r *WorkflowReconciler) createWorkloadForNode(ctx context.Context, workflow
 	logger.Info("created workload for node successfully", "node", node.Name, "workload", pod.Name)
 
 	return &pod, nil
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *WorkflowReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&devopsv1.Workflow{}).
+		Owns(&v1.Pod{}).
+		WithEventFilter(predicate.Funcs{
+			CreateFunc: nil,
+			DeleteFunc: nil,
+			UpdateFunc: func(event event.UpdateEvent) bool {
+				o1, ok1 := event.ObjectOld.(*v1.Pod)
+				o2, ok2 := event.ObjectNew.(*v1.Pod)
+				if ok1 && ok2 {
+					return o1.Status.Phase == o2.Status.Phase
+				}
+				return true
+			},
+			GenericFunc: nil,
+		}).
+		Complete(r)
 }

@@ -61,6 +61,8 @@ func (r *Workflow) Default() {
 		r.Status.Phase = DefaultWorkflowPhase
 	}
 
+	r.Status.Total = len(r.Spec.Nodes)
+
 	for i := range r.Spec.Nodes {
 		if r.Spec.Nodes[i].Timeout == 0 {
 			r.Spec.Nodes[i].Timeout = DefaultNodeTimeout
@@ -84,6 +86,14 @@ func (r *Workflow) ValidateCreate() error {
 		return ErrNodesMustBeSpecified
 	}
 
+	if r.CheckInComing() {
+		return ErrWorkflowMissingNode
+	}
+
+	if r.CheckCycle() {
+		return ErrWorkflowHasCycle
+	}
+
 	return nil
 }
 
@@ -94,6 +104,14 @@ func (r *Workflow) ValidateUpdate(old runtime.Object) error {
 	// TODO(user): fill in your validation logic upon object update.
 	if len(r.Spec.Nodes) == 0 {
 		return ErrNodesMustBeSpecified
+	}
+
+	if r.CheckInComing() {
+		return ErrWorkflowMissingNode
+	}
+
+	if r.CheckCycle() {
+		return ErrWorkflowHasCycle
 	}
 
 	return nil

@@ -117,9 +117,17 @@ type NodeWorkload struct {
 type WorkflowStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	Phase        WorkflowPhase        `json:"phase,omitempty"`
-	Reason       string               `json:"reason,omitempty"`
-	Message      string               `json:"message,omitempty"`
+	// +optional
+	Resets []string `json:"resets,omitempty"`
+	// +optional
+	Clear   bool          `json:"clear,omitempty"`
+	Phase   WorkflowPhase `json:"phase,omitempty"`
+	Reason  string        `json:"reason,omitempty"`
+	Message string        `json:"message,omitempty"`
+
+	Total        int `json:"total"`
+	RunningCount int `json:"runningCount"`
+
 	RunningNodes []string             `json:"runningNodes,omitempty"`
 	Nodes        []WorkflowNodeStatus `json:"nodes,omitempty"`
 	HistoryNodes []WorkflowNodeStatus `json:"historyNodes,omitempty"`
@@ -128,7 +136,8 @@ type WorkflowStatus struct {
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 //+kubebuilder:printcolumn:JSONPath=".status.phase",name=Phase,type=string
-//+kubebuilder:printcolumn:JSONPath=".status.runningNodes",name=RunningNodes,type=string
+//+kubebuilder:printcolumn:JSONPath=".status.runningCount",name=Running,type=integer
+//+kubebuilder:printcolumn:JSONPath=".status.total",name=Total,type=integer
 
 // Workflow is the Schema for the workflows API
 type Workflow struct {
