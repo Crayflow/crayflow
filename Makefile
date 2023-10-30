@@ -104,7 +104,7 @@ undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/confi
 	$(KUSTOMIZE) build config/default | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
 
 .PHONY: fast-deploy
-fast-deploy: manifests kustomize docker-build docker-push deploy
+fast-deploy: install docker-build docker-push deploy
 	echo ${IMG} deployed
 
 ##@ Build Dependencies
