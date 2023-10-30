@@ -50,6 +50,7 @@ const (
 )
 
 var (
+	ErrHasRepeatNode       = errors.New("workflow has repeat node")
 	ErrWorkflowMissingNode = errors.New("workflow missing node")
 	ErrWorkflowHasCycle    = errors.New("workflow has cycle")
 	ErrNodeNotFound        = errors.New("node not found")
@@ -66,8 +67,10 @@ type WorkflowSpec struct {
 
 	Creator string `json:"creator,omitempty"`
 	// +optional
-	Description string             `json:"description,omitempty"`
-	Nodes       []WorkflowNodeSpec `json:"nodes,omitempty"`
+	Description string `json:"description,omitempty"`
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinItems:=1
+	Nodes []WorkflowNodeSpec `json:"nodes,omitempty"`
 	// +optional
 	Vars []WorkflowVariableSpec `json:"variables,omitempty"`
 	// if user wants to restart the workflow, can set this field to name of some nodes,
@@ -85,6 +88,7 @@ type WorkflowVariableSpec struct {
 }
 
 type WorkflowNodeSpec struct {
+	// +kubebuilder:validation:Required
 	Name         string        `json:"name,omitempty"`
 	Dependencies []string      `json:"dependencies,omitempty"`
 	Timeout      time.Duration `json:"timeout,omitempty"`
@@ -138,6 +142,7 @@ type WorkflowStatus struct {
 //+kubebuilder:printcolumn:JSONPath=".status.phase",name=Phase,type=string
 //+kubebuilder:printcolumn:JSONPath=".status.runningCount",name=Running,type=integer
 //+kubebuilder:printcolumn:JSONPath=".status.total",name=Total,type=integer
+//+kubebuilder:printcolumn:JSONPath=".status.runningNodes",name=RunningNodes,type=string
 
 // Workflow is the Schema for the workflows API
 type Workflow struct {

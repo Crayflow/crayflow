@@ -136,19 +136,3 @@ func (workflow *Workflow) RemoveWorkflowNodeStatus(nodeName string) {
 
 	workflow.Status.Nodes = workflow.Status.Nodes[:l]
 }
-
-// CheckCycle ...
-func (workflow *Workflow) CheckCycle() bool {
-	// TODO: find cycle
-	// ErrWorkflowHasCycle
-
-	return false
-}
-
-// CheckInComing ...
-func (workflow *Workflow) CheckInComing() bool {
-	// TODO: find node's dependencies whether validation
-	// ErrWorkflowMissingNode
-
-	return false
-}

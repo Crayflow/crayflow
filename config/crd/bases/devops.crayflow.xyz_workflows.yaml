@@ -25,6 +25,9 @@ spec:
     - jsonPath: .status.total
       name: Total
       type: integer
+    - jsonPath: .status.runningNodes
+      name: RunningNodes
+      type: string
     name: v1
     schema:
       openAPIV3Schema:
@@ -641,6 +644,7 @@ spec:
                       format: int64
                       type: integer
                   type: object
+                minItems: 1
                 type: array
               resets:
                 items:

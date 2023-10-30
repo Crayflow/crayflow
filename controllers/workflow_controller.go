@@ -345,6 +345,9 @@ func (r *WorkflowReconciler) ProcessWorkflowReadyNodes(ctx context.Context, work
 		logger.Info(fmt.Sprintf("update node status"), "node", node.Name,
 			"status", nodeStatus.Phase)
 		workflow.UpdateWorkflowNodeStatus(nodeStatus)
+		workflow.Status.RunningNodes = append(workflow.Status.RunningNodes,
+			fmt.Sprintf("%s:%s", node.Name, devopsv1.NodePhaseRunning),
+		)
 
 		r.Eventer.Event(workflow, v1.EventTypeNormal, "ScheduleNode", fmt.Sprintf("Schedule node %s", node.Name))
 		workflow.Status.Phase = devopsv1.WorkflowPhaseRunning
