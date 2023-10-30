@@ -1,8 +1,24 @@
 # crayflow
-// TODO(user): Add simple overview of use/purpose
+Workflow orchestration engine in k8s, same like Airflow or Argo-Workflow, but more simple.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+### Features:
+* Just like normal workflow orchestration
+* Basic support `container` type node
+* Reset and redo some nodes like airflow's `clear` operation
+* Support `timeout` strategy for node
+
+### TODO Features:
+* Support variable set and load
+* Support node condition trigger
+* Support workflow template
+* Support bash or python script
+* Support sub-workflow or workflow nesting
+* Support custom plugin
+* Support standard airflow operator
+
+### Never Supported Features
+* Cycle workflow
 
 ## Getting Started
 You’ll need a Kubernetes cluster to run against. You can use [KIND](https://sigs.k8s.io/kind) to get a local cluster for testing, or run against a remote cluster.

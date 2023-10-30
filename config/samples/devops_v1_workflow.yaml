@@ -8,7 +8,6 @@ spec:
   vars:
     - key: key1
       value:
-        v: h
         foo: bar
   resets:
     - step1
