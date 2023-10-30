@@ -69,7 +69,7 @@ type WorkflowSpec struct {
 	// +optional
 	Description string `json:"description,omitempty"`
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinItems:=1
+	// +kubebuilder:validation:MinItems=1
 	Nodes []WorkflowNodeSpec `json:"nodes,omitempty"`
 	// +optional
 	Vars []WorkflowVariableSpec `json:"variables,omitempty"`
@@ -83,12 +83,16 @@ type WorkflowSpec struct {
 }
 
 type WorkflowVariableSpec struct {
-	Key   string               `json:"key,omitempty"`
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Key string `json:"key,omitempty"`
+	// +kubebuilder:validation:Required
 	Value runtime.RawExtension `json:"value,omitempty"`
 }
 
 type WorkflowNodeSpec struct {
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
 	Name         string        `json:"name,omitempty"`
 	Dependencies []string      `json:"dependencies,omitempty"`
 	Timeout      time.Duration `json:"timeout,omitempty"`
