@@ -5,9 +5,17 @@ metadata:
 spec:
   # TODO(user): Add fields here
   # creator: "buhuipao"
+  vars:
+    - key: key1
+      value:
+        v: h
+        foo: bar
+  resets:
+    - step1
   nodes:
-    - name: ""
+    - name: "step1"
       timeout: 600
+      dependencies:
       container:
         name: "hello"
         image: "docker/whalesay"

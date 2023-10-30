@@ -12,6 +12,8 @@ spec:
     kind: Workflow
     listKind: WorkflowList
     plural: workflows
+    shortNames:
+    - wf
     singular: workflow
   scope: Namespaced
   versions:
@@ -639,10 +641,14 @@ spec:
                         type: string
                       type: array
                     name:
+                      minLength: 1
                       type: string
                     timeout:
                       format: int64
                       type: integer
+                  required:
+                  - container
+                  - name
                   type: object
                 minItems: 1
                 type: array
@@ -650,15 +656,22 @@ spec:
                 items:
                   type: string
                 type: array
-              variables:
+              vars:
                 items:
                   properties:
                     key:
+                      minLength: 1
                       type: string
                     value:
                       type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                  required:
+                  - key
+                  - value
                   type: object
                 type: array
+            required:
+            - nodes
             type: object
           status:
             properties:

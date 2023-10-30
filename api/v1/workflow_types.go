@@ -70,9 +70,9 @@ type WorkflowSpec struct {
 	Description string `json:"description,omitempty"`
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
-	Nodes []WorkflowNodeSpec `json:"nodes,omitempty"`
+	Nodes []WorkflowNodeSpec `json:"nodes"`
 	// +optional
-	Vars []WorkflowVariableSpec `json:"variables,omitempty"`
+	Vars []WorkflowVariableSpec `json:"vars,omitempty"`
 	// if user wants to restart the workflow, can set this field to name of some nodes,
 	// controller will run the workflow from those nodes, after process,
 	// controller will reset this field to be empty
@@ -85,19 +85,21 @@ type WorkflowSpec struct {
 type WorkflowVariableSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
-	Key string `json:"key,omitempty"`
+	Key string `json:"key"`
 	// +kubebuilder:validation:Required
-	Value runtime.RawExtension `json:"value,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Value runtime.RawExtension `json:"value"`
 }
 
 type WorkflowNodeSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
-	Name         string        `json:"name,omitempty"`
+	Name         string        `json:"name"`
 	Dependencies []string      `json:"dependencies,omitempty"`
 	Timeout      time.Duration `json:"timeout,omitempty"`
 	// Plugin    runtime.RawExtension `json:"plugin,omitempty"`
-	Container *v1.Container `json:"container,omitempty"`
+	// +kubebuilder:validation:Required
+	Container *v1.Container `json:"container"`
 }
 
 type WorkflowNodeStatus struct {
@@ -142,6 +144,7 @@ type WorkflowStatus struct {
 }
 
 //+kubebuilder:object:root=true
+//+kubebuilder:resource:shortName="wf"
 //+kubebuilder:subresource:status
 //+kubebuilder:printcolumn:JSONPath=".status.phase",name=Phase,type=string
 //+kubebuilder:printcolumn:JSONPath=".status.runningCount",name=Running,type=integer
