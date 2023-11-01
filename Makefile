@@ -71,14 +71,19 @@ build: generate fmt vet ## Build manager binary.
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./main.go
+	# TODO: Build tools
 
 .PHONY: docker-build
 docker-build: test ## Build docker image with the manager.
-	docker build -t ${IMG} .
+	docker build -t ${IMG} -f build/Dockerfile .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	docker push ${IMG}
+
+.PHONY: build-tool
+build-tool:
+	docker build -t buhuipao/crayflow-tool:${TAG} -f build/tools.Dockerfile .
 
 ##@ Deployment
 
