@@ -30,13 +30,23 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"time"
 )
 
 const WorkflowFinalizerName = "delete_workflow"
+const (
+	VariableConfigMapMountName = "crayflow-variable-config"
+	VariableConfigMapMountPath = "/crayflow/workspace/vars"
+
+	ToolsContainerName  = "tools"
+	ToolsContainerImage = "buhuipao/crayflow-tools:latest"
+	ToolsMountName      = "crayflow-tools"
+	ToolsOriginPath     = "/tools"
+	ToolsMountPath      = "/crayflow/tools/"
+
+	ServiceAccountName = "crayflow-controller-manager"
+)
 
 // WorkflowReconciler reconciles a Workflow object
 type WorkflowReconciler struct {
@@ -51,6 +61,7 @@ type WorkflowReconciler struct {
 
 //+kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -86,6 +97,8 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 		return ctrl.Result{}, nil
 	}
+
+	// TODO: create configmap for workflow as variable storage
 
 	if workflow.Status.Phase == "" {
 		r.Eventer.Event(workflow, v1.EventTypeNormal, "Initial", "Initial workflow phase, update to 'Pending'")
@@ -392,6 +405,31 @@ func (r *WorkflowReconciler) createWorkloadForNode(ctx context.Context, workflow
 	if node.Container.Name == "" {
 		node.Container.Name = "workload"
 	}
+	toolsVolume := v1.Volume{
+		Name: ToolsMountName,
+		VolumeSource: v1.VolumeSource{
+			EmptyDir: nil,
+		},
+	}
+	toolsMount := v1.VolumeMount{
+		Name:      ToolsMountName,
+		MountPath: ToolsMountPath,
+	}
+	toolsContainer := v1.Container{
+		Name:         ToolsContainerName,
+		Image:        ToolsContainerImage,
+		VolumeMounts: []v1.VolumeMount{toolsMount},
+		Command:      []string{"sh"},
+		Args: []string{
+			"-c",
+			fmt.Sprintf("ls -al %s && cp %s/* %s", ToolsOriginPath, ToolsOriginPath, ToolsMountPath),
+		},
+	}
+
+	node.Container.VolumeMounts = append(node.Container.VolumeMounts, v1.VolumeMount{
+		Name:      ToolsMountName,
+		MountPath: ToolsMountPath,
+	})
 	pod := v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: fmt.Sprintf("crayflow-%s-%s-", workflow.Name, node.Name),
@@ -402,8 +440,17 @@ func (r *WorkflowReconciler) createWorkloadForNode(ctx context.Context, workflow
 			Namespace: workflow.Namespace,
 		},
 		Spec: v1.PodSpec{
-			Containers:    []v1.Container{*node.Container},
+			InitContainers: []v1.Container{
+				toolsContainer,
+			},
+			Containers: []v1.Container{
+				*node.Container,
+			},
 			RestartPolicy: v1.RestartPolicyNever,
+			Volumes: []v1.Volume{
+				toolsVolume,
+			},
+			// TODO: serviceAccount for get or update configmaps
 		},
 	}
 	if err := controllerutil.SetOwnerReference(workflow, &pod, r.Scheme); err != nil {
@@ -428,18 +475,25 @@ func (r *WorkflowReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&devopsv1.Workflow{}).
 		Owns(&v1.Pod{}).
-		WithEventFilter(predicate.Funcs{
-			CreateFunc: nil,
-			DeleteFunc: nil,
-			UpdateFunc: func(event event.UpdateEvent) bool {
-				o1, ok1 := event.ObjectOld.(*v1.Pod)
-				o2, ok2 := event.ObjectNew.(*v1.Pod)
-				if ok1 && ok2 {
-					return o1.Status.Phase == o2.Status.Phase
-				}
-				return true
-			},
-			GenericFunc: nil,
-		}).
+		/*
+				WithEventFilter(predicate.Funcs{
+					CreateFunc: nil,
+					DeleteFunc: nil,
+					UpdateFunc: func(event event.UpdateEvent) bool {
+						o1, ok1 := event.ObjectOld.(*v1.Pod)
+						o2, ok2 := event.ObjectNew.(*v1.Pod)
+						if ok1 && ok2 {
+							return o1.Status.Phase == o2.Status.Phase
+						}
+						return true
+					},
+					GenericFunc: nil,
+				}).
+			Watches(
+				&source.Kind{Type: &v1.ConfigMap{}},
+				handler.EnqueueRequestsFromMapFunc(r.findObjectsForConfigMap),
+				builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+			).
+		*/
 		Complete(r)
 }

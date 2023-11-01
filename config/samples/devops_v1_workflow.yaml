@@ -17,9 +17,13 @@ spec:
       dependencies:
       container:
         name: "hello"
-        image: "docker/whalesay"
-        command: [ cowsay ]
-        args: [ "hello world" ]
+        image: "busybox:latest"
+        command: ["sh"]
+        args: 
+          - -c
+          - |
+            echo "hellow, busybox."
+            sleep 600
         resources: # limit the resources
           limits:
             memory: 32Mi

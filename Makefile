@@ -1,7 +1,8 @@
 
 # Image URL to use all building/pushing image targets
 # IMG ?= controller:latest
-TAG ?= $(shell git log | grep commit | head -n 1 | sed "s/commit //g")
+#TAG ?= $(shell git log | grep commit | head -n 1 | sed "s/commit //g")
+TAG ?=$(shell git diff | md5)
 IMG ?= buhuipao/crayflow:${TAG}
 
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
@@ -83,7 +84,8 @@ docker-push: ## Push docker image with the manager.
 
 .PHONY: build-tool
 build-tool:
-	docker build -t buhuipao/crayflow-tool:${TAG} -f build/tools.Dockerfile .
+	docker build -t buhuipao/crayflow-tools:latest -f build/tools.Dockerfile .
+	docker push buhuipao/crayflow-tools:latest
 
 ##@ Deployment
 
@@ -109,7 +111,7 @@ undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/confi
 	$(KUSTOMIZE) build config/default | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
 
 .PHONY: fast-deploy
-fast-deploy: install docker-build docker-push deploy
+fast-deploy: docker-build docker-push deploy
 	echo ${IMG} deployed
 
 ##@ Build Dependencies

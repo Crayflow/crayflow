@@ -16,12 +16,14 @@ COPY vendor/ vendor/
 # Copy the go source
 COPY cmd/ cmd/
 COPY api/ api/
+RUN mkdir bin
 
 # Build
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o set_var cmd/tools/set_var/main.go
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o load_var cmd/tools/load_var/main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o bin/set_var cmd/tools/set_var/main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o bin/load_var cmd/tools/load_var/main.go
 
 #FROM gcr.io/distroless/static:nonroot
 FROM busybox:latest
 WORKDIR /tools
-COPY --from=builder /workspace .
+COPY --from=builder /workspace/bin .
+RUN chmod a+x ./*
