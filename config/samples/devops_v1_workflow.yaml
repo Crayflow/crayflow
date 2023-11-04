@@ -1,16 +1,21 @@
 apiVersion: devops.crayflow.xyz/v1
 kind: Workflow
 metadata:
-  name: sample1
+  name: sample
 spec:
   # TODO(user): Add fields here
-  # creator: "buhuipao"
+  creator: "buhuipao"
+  serviceAccountName: crayflow-default
   vars:
     - key: key1
-      value:
-        foo: bar
+      value: value1
+    - key: json1
+      value: |
+        {
+          "key": "value"
+        }
   resets:
-    - step1
+    - "step1"
   nodes:
     - name: "step1"
       timeout: 600
@@ -22,8 +27,8 @@ spec:
         args: 
           - -c
           - |
-            echo "hellow, busybox."
-            sleep 600
+            echo "hello, busybox."
+            sleep 300
         resources: # limit the resources
           limits:
             memory: 32Mi

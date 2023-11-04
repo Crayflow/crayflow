@@ -36,8 +36,9 @@ import (
 
 const WorkflowFinalizerName = "delete_workflow"
 const (
-	VariableConfigMapMountName = "crayflow-variable-config"
-	VariableConfigMapMountPath = "/crayflow/workspace/vars"
+	VariableConfigMapMountName     = "crayflow-variable-config"
+	VariableConfigMapMountPath     = "/crayflow/workspace/vars"
+	VariableConfigMapNameFormatter = "crayflow-variable-%s"
 
 	ToolsContainerName  = "tools"
 	ToolsContainerImage = "buhuipao/crayflow-tools:latest"
@@ -124,6 +125,24 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		r.Eventer.Event(workflow, v1.EventTypeWarning, "FoundCycle", "Update workflow phase to 'Failed'")
 		workflow.Status.Phase = devopsv1.WorkflowPhaseFailed
 		workflow.Status.Reason, workflow.Status.Message = devopsv1.ErrWorkflowHasCycle.Error(), "workflow has cycle"
+		if err := r.Status().Update(ctx, workflow); err != nil {
+			logger.Error(err, "update workflow failed")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	if workflow.Status.VariableConfigMap == nil {
+		cm, err := r.CreateConfigMapForWorkflow(ctx, workflow)
+		if err != nil {
+			r.Eventer.Event(workflow, v1.EventTypeWarning, "ScheduleError",
+				fmt.Sprintf("Create variable configMap failed, %v", err))
+			logger.Error(err, "create variable configMap failed")
+			return ctrl.Result{}, err
+		}
+		workflow.Status.VariableConfigMap = cm
+		r.Eventer.Event(workflow, v1.EventTypeNormal, "Schedule",
+			fmt.Sprintf("Create variable configMap[%s/%s] success", cm.Namespace, cm.Name))
 		if err := r.Status().Update(ctx, workflow); err != nil {
 			logger.Error(err, "update workflow failed")
 			return ctrl.Result{}, err
@@ -426,10 +445,52 @@ func (r *WorkflowReconciler) createWorkloadForNode(ctx context.Context, workflow
 		},
 	}
 
-	node.Container.VolumeMounts = append(node.Container.VolumeMounts, v1.VolumeMount{
-		Name:      ToolsMountName,
-		MountPath: ToolsMountPath,
-	})
+	node.Container.VolumeMounts = append(node.Container.VolumeMounts,
+		v1.VolumeMount{
+			Name:      ToolsMountName,
+			MountPath: "/usr/local/bin/set_var",
+			SubPath:   "set_var",
+		},
+		v1.VolumeMount{
+			Name:      ToolsMountName,
+			MountPath: "/usr/local/bin/load_var",
+			SubPath:   "load_var",
+		},
+	)
+	node.Container.Env = append(node.Container.Env,
+		v1.EnvVar{
+			Name:  devopsv1.EnvCrayflowWorkflowNameKey,
+			Value: workflow.Name,
+		},
+		v1.EnvVar{
+			Name:  devopsv1.EnvCrayflowWorkflowNamespaceKey,
+			Value: workflow.Namespace,
+		},
+	)
+	var err error
+	cm := &v1.ConfigMap{}
+	cmKey := types.NamespacedName{
+		Namespace: workflow.Namespace,
+		Name:      fmt.Sprintf(devopsv1.WorkflowVariableKeyFormat, workflow.Name),
+	}
+	if err = r.Get(ctx, cmKey, cm); err != nil && !apierrors.IsNotFound(err) {
+		logger.Error(err, "get config map of workflow failed when create workload for node", "node", node.Name)
+		return nil, err
+	}
+	if apierrors.IsNotFound(err) {
+		cm, err = r.CreateConfigMapForWorkflow(ctx, workflow)
+		if err != nil {
+			return nil, err
+		}
+	}
+	for k, v := range cm.Data {
+		node.Container.Env = append(node.Container.Env,
+			v1.EnvVar{
+				Name:  k,
+				Value: v,
+			},
+		)
+	}
 	pod := v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: fmt.Sprintf("crayflow-%s-%s-", workflow.Name, node.Name),
@@ -450,7 +511,8 @@ func (r *WorkflowReconciler) createWorkloadForNode(ctx context.Context, workflow
 			Volumes: []v1.Volume{
 				toolsVolume,
 			},
-			// TODO: serviceAccount for get or update configmaps
+			// serviceAccount for get or update variable configmap
+			ServiceAccountName: workflow.Spec.ServiceAccountName,
 		},
 	}
 	if err := controllerutil.SetOwnerReference(workflow, &pod, r.Scheme); err != nil {
@@ -468,6 +530,35 @@ func (r *WorkflowReconciler) createWorkloadForNode(ctx context.Context, workflow
 	logger.Info("created workload for node successfully", "node", node.Name, "workload", pod.Name)
 
 	return &pod, nil
+}
+
+// CreateConfigMapForWorkflow ...
+func (r *WorkflowReconciler) CreateConfigMapForWorkflow(ctx context.Context, workflow *devopsv1.Workflow) (
+	*v1.ConfigMap, error) {
+	logger := log.FromContext(ctx)
+	data := make(map[string]string, len(workflow.Spec.Vars))
+	for i := range workflow.Spec.Vars {
+		v := workflow.Spec.Vars[i]
+		data[v.Key] = v.Value
+	}
+
+	cm := v1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{
+				"crayflow/workflow": workflow.Name,
+			},
+			Name:      fmt.Sprintf(devopsv1.WorkflowVariableKeyFormat, workflow.Name),
+			Namespace: workflow.Namespace,
+		},
+		Data: data,
+	}
+
+	if err := controllerutil.SetOwnerReference(workflow, &cm, r.Scheme); err != nil {
+		logger.Error(err, "set pod owner reference failed")
+		return nil, err
+	}
+
+	return &cm, r.Create(ctx, &cm)
 }
 
 // SetupWithManager sets up the controller with the Manager.

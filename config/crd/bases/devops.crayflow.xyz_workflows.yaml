@@ -652,10 +652,14 @@ spec:
                   type: object
                 minItems: 1
                 type: array
+              pause:
+                type: boolean
               resets:
                 items:
                   type: string
                 type: array
+              serviceAccountName:
+                type: string
               vars:
                 items:
                   properties:
@@ -663,8 +667,8 @@ spec:
                       minLength: 1
                       type: string
                     value:
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
+                      minLength: 1
+                      type: string
                   required:
                   - key
                   - value
@@ -755,6 +759,26 @@ spec:
                 type: array
               total:
                 type: integer
+              variableConfigMap:
+                properties:
+                  apiVersion:
+                    type: string
+                  binaryData:
+                    additionalProperties:
+                      format: byte
+                      type: string
+                    type: object
+                  data:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  immutable:
+                    type: boolean
+                  kind:
+                    type: string
+                  metadata:
+                    type: object
+                type: object
             required:
             - runningCount
             - total

@@ -20,7 +20,6 @@ import (
 	"errors"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"time"
 )
 
@@ -30,7 +29,7 @@ import (
 const (
 	EnvCrayflowWorkflowNameKey      = "CRAYFLOW_WORKFLOW_NAME"
 	EnvCrayflowWorkflowNamespaceKey = "CRAYFLOW_WORKFLOW_NAMESPACE"
-	WorkflowVariableKeyFormat       = "crayflow-%s-cm"
+	WorkflowVariableKeyFormat       = "crayflow-%s-variables"
 )
 
 // WorkflowPhase is the workflow phase
@@ -70,15 +69,18 @@ type WorkflowSpec struct {
 
 	// Foo is an example field of Workflow. Edit workflow_types.go to remove/update
 	// Foo string `json:"foo,omitempty"`
-
+	// +optional
 	Creator string `json:"creator,omitempty"`
 	// +optional
 	Description string `json:"description,omitempty"`
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
 	Nodes []WorkflowNodeSpec `json:"nodes"`
 	// +optional
 	Vars []WorkflowVariableSpec `json:"vars,omitempty"`
+
 	// if user wants to restart the workflow, can set this field to name of some nodes,
 	// controller will run the workflow from those nodes, after process,
 	// controller will reset this field to be empty
@@ -86,6 +88,7 @@ type WorkflowSpec struct {
 	Resets []string `json:"resets,omitempty"`
 	// +optional
 	Clear bool `json:"clear,omitempty"`
+	Pause bool `json:"pause,omitempty"`
 }
 
 type WorkflowVariableSpec struct {
@@ -93,8 +96,8 @@ type WorkflowVariableSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Key string `json:"key"`
 	// +kubebuilder:validation:Required
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Value runtime.RawExtension `json:"value"`
+	// +kubebuilder:validation:MinLength=1
+	Value string `json:"value"`
 }
 
 type WorkflowNodeSpec struct {
@@ -133,20 +136,23 @@ type NodeWorkload struct {
 type WorkflowStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	// +optional
-	Resets []string `json:"resets,omitempty"`
-	// +optional
-	Clear   bool          `json:"clear,omitempty"`
 	Phase   WorkflowPhase `json:"phase,omitempty"`
 	Reason  string        `json:"reason,omitempty"`
 	Message string        `json:"message,omitempty"`
 
-	Total        int `json:"total"`
-	RunningCount int `json:"runningCount"`
+	// +optional
+	Resets []string `json:"resets,omitempty"`
+	// +optional
+	Clear bool `json:"clear,omitempty"`
 
+	Total        int                  `json:"total"`
+	RunningCount int                  `json:"runningCount"`
 	RunningNodes []string             `json:"runningNodes,omitempty"`
 	Nodes        []WorkflowNodeStatus `json:"nodes,omitempty"`
 	HistoryNodes []WorkflowNodeStatus `json:"historyNodes,omitempty"`
+
+	// +optional
+	VariableConfigMap *v1.ConfigMap `json:"variableConfigMap,omitempty"`
 }
 
 //+kubebuilder:object:root=true
