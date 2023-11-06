@@ -5,7 +5,6 @@ metadata:
 spec:
   # TODO(user): Add fields here
   creator: "buhuipao"
-  serviceAccountName: crayflow-default
   vars:
     - key: key1
       value: value1
@@ -15,7 +14,7 @@ spec:
           "key": "value"
         }
   resets:
-    - "step1"
+  serviceAccountName: crayflow-default
   nodes:
     - name: "step1"
       timeout: 600

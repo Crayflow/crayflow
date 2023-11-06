@@ -13,4 +13,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: buhuipao/crayflow
-  newTag: b0a54fc417bd70b559f3687ad30711aa
+  newTag: 1653d678c3d438339620498287db4961

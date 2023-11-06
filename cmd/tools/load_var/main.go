@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	devopsv1 "github.com/buhuipao/crayflow/api/v1"
+	"github.com/spf13/cobra"
 	"io/ioutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -33,15 +33,28 @@ func init() {
 }
 
 func main() {
-	flag.StringVar(&outFile, "file", "", "Write value to the file")
-	flag.Parse()
+	cmd := &cobra.Command{
+		Use:   "crayflow-load—var",
+		Short: "Load the workflow variable",
+		Long:  "Load the workflow variable",
+		Run: func(cmd *cobra.Command, args []string) {
+			// log.Println("args:", args, ", fromFile:", fromFile)
 
-	if len(os.Args) < 2 {
-		panic("too few arguments, expecting key of a variable. usage: " +
-			"\n\t./load_var ${key} \n\t./load_var ${key} --file ${value_save_file}")
+			if len(os.Args) < 2 {
+				panic("too few arguments, expecting key of a variable. usage: " +
+					"\n\t./load_var ${key} \n\t./load_var ${key} --file ${value_save_file}")
+			}
+			key := os.Args[1]
+
+			loadVar(key, outFile)
+		},
 	}
-	key := os.Args[1]
 
+	cmd.Flags().StringVarP(&outFile, "file", "f", "", "Write value to the file")
+	cmd.Execute()
+}
+
+func loadVar(key, outFile string) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		panic(err.Error())

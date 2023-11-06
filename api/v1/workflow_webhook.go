@@ -79,6 +79,7 @@ var _ webhook.Validator = &Workflow{}
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
 func (r *Workflow) ValidateCreate() error {
 	workflowlog.Info("validate create", "name", r.Name)
+	workflowlog.Info("validate create", "spec", r.Spec)
 
 	// TODO(user): fill in your validation logic upon object creation.
 

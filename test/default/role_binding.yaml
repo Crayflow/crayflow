@@ -11,3 +11,6 @@ subjects:
 - kind: ServiceAccount
   name: crayflow-default
   namespace: default
+- kind: ServiceAccount
+  name: crayflow-controller-manager
+  namespace: crayflow-system
