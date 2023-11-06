@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tools-test
+  namespace: default
+spec:
+  containers:
+  - args:
+    - -c
+    - |
+      echo "hello, busybox."
+      sleep 300
+    command:
+    - sh
+    image: buhuipao/crayflow-tools:latest
+    imagePullPolicy: Never
+    name: hello
+    resources:
+      limits:
+        cpu: 100m
+        memory: 32Mi
+      requests:
+        cpu: 100m
+        memory: 32Mi
+    env:
+      - name: CRAYFLOW_WORKFLOW_NAME
+        value: sample
+      - name: CRAYFLOW_WORKFLOW_NAMESPACE
+        value: default
+  serviceAccountName: crayflow-default
