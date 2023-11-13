@@ -40,15 +40,15 @@ func main() {
 		Run: func(cmd *cobra.Command, args []string) {
 			// log.Println("args:", args, ", fromFile:", fromFile)
 
-			if len(args) < 2 {
+			if len(args) < 1 {
 				panic("too few arguments, expecting key and value of a variable. usage: " +
 					"\n\t./set_var ${key} ${value} \n\t./set_var ${key} --file ${value_file_path}")
 			}
-			key := args[1]
+			key := args[0]
 
 			var value string
-			if len(args) >= 3 {
-				value = os.Args[2]
+			if len(args) >= 2 {
+				value = args[1]
 			}
 
 			setVar(key, value, fromFile)

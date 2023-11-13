@@ -40,11 +40,11 @@ func main() {
 		Run: func(cmd *cobra.Command, args []string) {
 			// log.Println("args:", args, ", fromFile:", fromFile)
 
-			if len(os.Args) < 2 {
+			if len(args) < 1 {
 				panic("too few arguments, expecting key of a variable. usage: " +
 					"\n\t./load_var ${key} \n\t./load_var ${key} --file ${value_save_file}")
 			}
-			key := os.Args[1]
+			key := args[0]
 
 			loadVar(key, outFile)
 		},

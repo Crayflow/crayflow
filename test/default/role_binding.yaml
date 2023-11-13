@@ -2,7 +2,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: crayflow-manager-rolebinding
+  name: crayflow-default-rolebinding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -11,6 +11,3 @@ subjects:
 - kind: ServiceAccount
   name: crayflow-default
   namespace: default
-- kind: ServiceAccount
-  name: crayflow-controller-manager
-  namespace: crayflow-system

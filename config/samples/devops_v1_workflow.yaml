@@ -14,6 +14,7 @@ spec:
           "key": "value"
         }
   resets:
+    - "step1"
   serviceAccountName: crayflow-default
   nodes:
     - name: "step1"
@@ -30,8 +31,8 @@ spec:
             sleep 300
         resources: # limit the resources
           limits:
-            memory: 32Mi
-            cpu: 100m
+            memory: 1024Mi
+            cpu: 300m
     #- name: "step2"
     #  timeout: 600
     #  dependencies:
