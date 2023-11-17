@@ -85,10 +85,35 @@ type WorkflowSpec struct {
 	// controller will run the workflow from those nodes, after process,
 	// controller will reset this field to be empty
 	// +optional
-	Resets []string `json:"resets,omitempty"`
+	Reset *WorkflowReset `json:"reset,omitempty"`
+	// +optional
+	Skip *WorkflowSkip `json:"skip,omitempty"`
+	// +optional
+	Pause *WorkflowPause `json:"pause,omitempty"`
+	// +optional
+	Resume *WorkflowResume `json:"resume,omitempty"`
+}
+
+type WorkflowReset struct {
+	// +optional
+	Nodes []string `json:"nodes,omitempty"`
 	// +optional
 	Clear bool `json:"clear,omitempty"`
-	Pause bool `json:"pause,omitempty"`
+}
+
+type WorkflowResume struct {
+	// +optional
+	Nodes []string `json:"nodes,omitempty"`
+}
+
+type WorkflowPause struct {
+	// +optional
+	Nodes []string `json:"nodes,omitempty"`
+}
+
+type WorkflowSkip struct {
+	// +optional
+	Nodes []string `json:"nodes,omitempty"`
 }
 
 type WorkflowVariableSpec struct {
@@ -108,7 +133,33 @@ type WorkflowNodeSpec struct {
 	Timeout      time.Duration `json:"timeout,omitempty"`
 	// Plugin    runtime.RawExtension `json:"plugin,omitempty"`
 	// +kubebuilder:validation:Required
-	Container *v1.Container `json:"container"`
+	Container *v1.Container   `json:"container"`
+	Outputs   NodeOutputsSpec `json:"outputs,omitempty"`
+	// +kubebuilder:validation:Optional
+	Condition string `json:"condition,omitempty"`
+}
+
+type NodeOutputsSpec struct {
+	Variables []NodeOutputsVariableSpec `json:"variables,omitempty"`
+	Files     []NodeOutputsFileSpec     `json:"files,omitempty"`
+}
+
+type NodeOutputsVariableSpec struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name      string `json:"name"`
+	ValueFrom struct {
+		Path string `json:"path"`
+	} `json:"valueFrom"`
+}
+
+type NodeOutputsFileSpec struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Path string `json:"path"`
 }
 
 type WorkflowNodeStatus struct {
@@ -141,9 +192,8 @@ type WorkflowStatus struct {
 	Message string        `json:"message,omitempty"`
 
 	// +optional
-	Resets []string `json:"resets,omitempty"`
-	// +optional
-	Clear bool `json:"clear,omitempty"`
+	Reset WorkflowReset `json:"reset,omitempty"`
+	// TODO: Skip, Pause, Resume
 
 	Total        int                  `json:"total"`
 	RunningCount int                  `json:"runningCount"`
@@ -153,6 +203,8 @@ type WorkflowStatus struct {
 
 	// +optional
 	VariableConfigMap *v1.ConfigMap `json:"variableConfigMap,omitempty"`
+	// +optional
+	Vars []WorkflowVariableSpec `json:"variables,omitempty"`
 }
 
 //+kubebuilder:object:root=true

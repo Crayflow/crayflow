@@ -35,18 +35,19 @@ import (
 )
 
 const WorkflowFinalizerName = "delete_workflow"
+
 const (
 	VariableConfigMapMountName     = "crayflow-variable-config"
-	VariableConfigMapMountPath     = "/crayflow/workspace/vars"
+	VariableConfigMapMountPath     = "/crayflow/vars"
 	VariableConfigMapNameFormatter = "crayflow-variable-%s"
+)
 
+const (
 	ToolsContainerName  = "tools"
 	ToolsContainerImage = "buhuipao/crayflow-tools:latest"
 	ToolsMountName      = "crayflow-tools"
 	ToolsOriginPath     = "/tools"
 	ToolsMountPath      = "/crayflow/tools/"
-
-	ServiceAccountName = "crayflow-controller-manager"
 )
 
 // WorkflowReconciler reconciles a Workflow object
@@ -99,8 +100,6 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 
-	// TODO: create configmap for workflow as variable storage
-
 	if workflow.Status.Phase == "" {
 		r.Eventer.Event(workflow, v1.EventTypeNormal, "Initial", "Initial workflow phase, update to 'Pending'")
 		workflow.Status.Phase, workflow.Status.Total = devopsv1.DefaultWorkflowPhase, len(workflow.Spec.Nodes)
@@ -132,6 +131,7 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 
+	// create a configmap for the workflow
 	if workflow.Status.VariableConfigMap == nil {
 		cm, err := r.CreateConfigMapForWorkflow(ctx, workflow)
 		if err != nil {
@@ -150,13 +150,15 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 
+	// add some runtimes extend info to workflow
+	r.AddInfo(ctx, workflow)
+
 	// OnUpdate
-	// if .Spec.Resets field changed, and the controller will re-run nodes that are in .Spec.Resets field
-	if len(workflow.Spec.Resets) != 0 {
-		return r.ProcessReset(ctx, workflow)
+	// process signal of workflow
+	ok, result, err := r.ProcessSignal(ctx, workflow)
+	if ok {
+		return result, err
 	}
-	workflow.Status.Clear, workflow.Status.Resets = false, nil
-	workflow.Status.Total = len(workflow.Spec.Nodes)
 
 	// workflow OnCreate or OnSchedule
 	runningNodes := workflow.FindWorkflowRunningNodes()
@@ -170,6 +172,7 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.ProcessWorkflowReadyNodes(ctx, workflow, readyNodes); err != nil {
 		return ctrl.Result{}, err
 	}
+
 	workflow.Status.RunningCount = len(runningNodes) + len(readyNodes)
 
 	// check node status then update workflow status
@@ -195,6 +198,44 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	return ctrl.Result{}, nil
 }
 
+func (r WorkflowReconciler) ProcessSignal(ctx context.Context, workflow *devopsv1.Workflow) (bool, ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	var (
+		has    bool
+		result ctrl.Result
+		err    error
+	)
+
+	switch {
+	// if .Spec.Resets field changed, and the controller will re-run nodes that are in .Spec.Resets field
+	case workflow.Spec.Reset != nil && len(workflow.Spec.Reset.Nodes) != 0:
+		logger.Info("process reset signal", "signal", workflow.Spec.Reset)
+		has = true
+		result, err = r.ProcessReset(ctx, workflow)
+
+	case workflow.Spec.Skip != nil && len(workflow.Spec.Skip.Nodes) != 0:
+		logger.Info("process skip signal", "signal", workflow.Spec.Skip)
+		has = true
+
+	case workflow.Spec.Pause != nil:
+		logger.Info("process pause signal", "signal", workflow.Spec.Pause)
+		has = true
+
+	case workflow.Spec.Resume != nil:
+		logger.Info("process resume signal", "signal", workflow.Spec.Resume)
+		has = true
+	}
+
+	return has, result, err
+}
+
+// AddInfo ...
+func (r *WorkflowReconciler) AddInfo(ctx context.Context, workflow *devopsv1.Workflow) {
+	workflow.Status.Total = len(workflow.Spec.Nodes)
+}
+
+// ProcessOnDelete ...
 func (r *WorkflowReconciler) ProcessOnDelete(ctx context.Context, workflow *devopsv1.Workflow) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	if len(workflow.Finalizers) != 0 && workflow.Finalizers[0] == WorkflowFinalizerName {
@@ -230,22 +271,23 @@ func (r *WorkflowReconciler) ProcessOnDelete(ctx context.Context, workflow *devo
 	return ctrl.Result{}, nil
 }
 
+// ProcessReset ...
 func (r *WorkflowReconciler) ProcessReset(ctx context.Context, workflow *devopsv1.Workflow) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	var changed bool
-	if !reflect.DeepEqual(workflow.Status.Resets, workflow.Spec.Resets) {
-		logger.Info("'resets' has changed", "old", workflow.Status.Resets, "new", workflow.Spec.Resets)
+	if !reflect.DeepEqual(workflow.Status.Reset.Nodes, workflow.Spec.Reset.Nodes) {
+		logger.Info("'resets' has changed", "old", workflow.Status.Reset.Nodes, "new", workflow.Spec.Reset.Nodes)
 		changed = true
 	}
-	if workflow.Status.Clear != workflow.Spec.Clear {
-		logger.Info("'clear' has changed", "old", workflow.Status.Clear, "new", workflow.Spec.Clear)
+	if workflow.Status.Reset.Clear != workflow.Spec.Reset.Clear {
+		logger.Info("'clear' has changed", "old", workflow.Status.Reset.Clear, "new", workflow.Spec.Reset.Clear)
 		changed = true
 	}
 	// remove node status and change workflow status
 	// copy 'resets' and 'clear' to status
 	if changed {
-		nodes := workflow.Spec.Resets
-		if workflow.Spec.Clear {
+		nodes := workflow.Spec.Reset.Nodes
+		if workflow.Spec.Reset.Clear {
 			nodes = workflow.FindPostNodes(nodes)
 		}
 		for i := range nodes {
@@ -254,7 +296,7 @@ func (r *WorkflowReconciler) ProcessReset(ctx context.Context, workflow *devopsv
 		}
 		workflow.Status.Total = len(workflow.Spec.Nodes)
 		workflow.Status.Phase = devopsv1.WorkflowPhaseRunning
-		workflow.Status.Resets, workflow.Status.Clear = workflow.Spec.Resets, workflow.Spec.Clear
+		workflow.Status.Reset.Nodes, workflow.Status.Reset.Clear = workflow.Spec.Reset.Nodes, workflow.Spec.Reset.Clear
 		r.Eventer.Event(workflow, v1.EventTypeNormal, "Reset", "Update phase to 'Running'")
 		if err := r.Status().Update(ctx, workflow); err != nil {
 			logger.Error(err, "update workflow failed in process reset")
@@ -265,7 +307,7 @@ func (r *WorkflowReconciler) ProcessReset(ctx context.Context, workflow *devopsv
 	}
 
 	// clean resets and clear flag
-	workflow.Spec.Resets, workflow.Spec.Clear = nil, false
+	workflow.Spec.Reset = nil
 	r.Eventer.Event(workflow, v1.EventTypeNormal, "Reset", "Clean 'Resets'")
 	if err := r.Update(ctx, workflow); err != nil {
 		logger.Error(err, "clean workflow resets failed")
@@ -275,6 +317,7 @@ func (r *WorkflowReconciler) ProcessReset(ctx context.Context, workflow *devopsv
 	return ctrl.Result{}, nil
 }
 
+// ProcessWorkflowRunningNodes ...
 func (r *WorkflowReconciler) ProcessWorkflowRunningNodes(ctx context.Context, workflow *devopsv1.Workflow,
 	runningNodes []devopsv1.WorkflowNodeStatus) error {
 	logger := log.FromContext(ctx)
@@ -360,6 +403,7 @@ func (r *WorkflowReconciler) ProcessWorkflowRunningNodes(ctx context.Context, wo
 	return nil
 }
 
+// ProcessWorkflowReadyNodes ...
 func (r *WorkflowReconciler) ProcessWorkflowReadyNodes(ctx context.Context, workflow *devopsv1.Workflow,
 	readyNodes []devopsv1.WorkflowNodeSpec) error {
 	logger := log.FromContext(ctx)
@@ -424,6 +468,88 @@ func (r *WorkflowReconciler) createWorkloadForNode(ctx context.Context, workflow
 	if node.Container.Name == "" {
 		node.Container.Name = "workload"
 	}
+
+	var err error
+	cm := &v1.ConfigMap{}
+	cmKey := types.NamespacedName{
+		Namespace: workflow.Namespace,
+		Name:      fmt.Sprintf(devopsv1.WorkflowVariableKeyFormat, workflow.Name),
+	}
+	if err = r.Get(ctx, cmKey, cm); err != nil && !apierrors.IsNotFound(err) {
+		logger.Error(err, "get config map of workflow failed when create workload for node", "node", node.Name)
+		return nil, err
+	}
+	if apierrors.IsNotFound(err) {
+		cm, err = r.CreateConfigMapForWorkflow(ctx, workflow)
+		if err != nil {
+			return nil, err
+		}
+		workflow.Status.VariableConfigMap = cm
+	}
+
+	pod := v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: fmt.Sprintf("crayflow-%s-%s-", workflow.Name, node.Name),
+			Labels: map[string]string{
+				"crayflow/workflow": workflow.Name,
+				"crayflow/node":     node.Name,
+			},
+			Namespace: workflow.Namespace,
+		},
+		Spec: v1.PodSpec{
+			Containers: []v1.Container{
+				*node.Container,
+			},
+			RestartPolicy: v1.RestartPolicyNever,
+			// serviceAccount for get or update variable configmap
+			ServiceAccountName: workflow.Spec.ServiceAccountName,
+		},
+	}
+	addEnvToNodeWorkload(workflow, &pod, cm.Data)
+	addToolToNodeWorkload(&pod)
+	// TODO: add support for node.Outputs
+
+	if err := controllerutil.SetOwnerReference(workflow, &pod, r.Scheme); err != nil {
+		logger.Error(err, "set pod owner reference failed", "node", node.Name)
+		return nil, err
+	}
+
+	logger.Info("creating workload for node", "node", node.Name)
+	r.Eventer.Event(workflow, v1.EventTypeNormal, "CreateWorkload", fmt.Sprintf("Create workload for node %s", node.Name))
+	if err := r.Create(ctx, &pod); err != nil {
+		logger.Error(err, "create workload for node failed", "node", node.Name)
+		return nil, err
+	}
+
+	logger.Info("created workload for node successfully", "node", node.Name, "workload", pod.Name)
+
+	return &pod, nil
+}
+
+func addEnvToNodeWorkload(workflow *devopsv1.Workflow, pod *v1.Pod, data map[string]string) {
+	workload := pod.Spec.Containers[0]
+
+	for k, v := range data {
+		workload.Env = append(workload.Env,
+			v1.EnvVar{
+				Name:  k,
+				Value: v,
+			},
+		)
+	}
+	workload.Env = append(workload.Env,
+		v1.EnvVar{
+			Name:  devopsv1.EnvCrayflowWorkflowNameKey,
+			Value: workflow.Name,
+		},
+		v1.EnvVar{
+			Name:  devopsv1.EnvCrayflowWorkflowNamespaceKey,
+			Value: workflow.Namespace,
+		},
+	)
+}
+
+func addToolToNodeWorkload(pod *v1.Pod) {
 	toolsVolume := v1.Volume{
 		Name: ToolsMountName,
 		VolumeSource: v1.VolumeSource{
@@ -444,8 +570,10 @@ func (r *WorkflowReconciler) createWorkloadForNode(ctx context.Context, workflow
 			fmt.Sprintf("ls -al %s && cp %s/* %s", ToolsOriginPath, ToolsOriginPath, ToolsMountPath),
 		},
 	}
+	pod.Spec.InitContainers = append(pod.Spec.InitContainers, toolsContainer)
+	pod.Spec.Volumes = append(pod.Spec.Volumes, toolsVolume)
 
-	node.Container.VolumeMounts = append(node.Container.VolumeMounts,
+	pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts,
 		v1.VolumeMount{
 			Name:      ToolsMountName,
 			MountPath: "/usr/local/bin/set_var",
@@ -457,79 +585,6 @@ func (r *WorkflowReconciler) createWorkloadForNode(ctx context.Context, workflow
 			SubPath:   "load_var",
 		},
 	)
-	node.Container.Env = append(node.Container.Env,
-		v1.EnvVar{
-			Name:  devopsv1.EnvCrayflowWorkflowNameKey,
-			Value: workflow.Name,
-		},
-		v1.EnvVar{
-			Name:  devopsv1.EnvCrayflowWorkflowNamespaceKey,
-			Value: workflow.Namespace,
-		},
-	)
-	var err error
-	cm := &v1.ConfigMap{}
-	cmKey := types.NamespacedName{
-		Namespace: workflow.Namespace,
-		Name:      fmt.Sprintf(devopsv1.WorkflowVariableKeyFormat, workflow.Name),
-	}
-	if err = r.Get(ctx, cmKey, cm); err != nil && !apierrors.IsNotFound(err) {
-		logger.Error(err, "get config map of workflow failed when create workload for node", "node", node.Name)
-		return nil, err
-	}
-	if apierrors.IsNotFound(err) {
-		cm, err = r.CreateConfigMapForWorkflow(ctx, workflow)
-		if err != nil {
-			return nil, err
-		}
-	}
-	for k, v := range cm.Data {
-		node.Container.Env = append(node.Container.Env,
-			v1.EnvVar{
-				Name:  k,
-				Value: v,
-			},
-		)
-	}
-	pod := v1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: fmt.Sprintf("crayflow-%s-%s-", workflow.Name, node.Name),
-			Labels: map[string]string{
-				"crayflow/workflow": workflow.Name,
-				"crayflow/node":     node.Name,
-			},
-			Namespace: workflow.Namespace,
-		},
-		Spec: v1.PodSpec{
-			InitContainers: []v1.Container{
-				toolsContainer,
-			},
-			Containers: []v1.Container{
-				*node.Container,
-			},
-			RestartPolicy: v1.RestartPolicyNever,
-			Volumes: []v1.Volume{
-				toolsVolume,
-			},
-			// serviceAccount for get or update variable configmap
-			ServiceAccountName: workflow.Spec.ServiceAccountName,
-		},
-	}
-	if err := controllerutil.SetOwnerReference(workflow, &pod, r.Scheme); err != nil {
-		logger.Error(err, "set pod owner reference failed", "node", node.Name)
-		return nil, err
-	}
-
-	logger.Info("creating workload for node", "node", node.Name)
-	r.Eventer.Event(workflow, v1.EventTypeNormal, "CreateWorkload", fmt.Sprintf("Create workload for node %s", node.Name))
-	if err := r.Create(ctx, &pod); err != nil {
-		logger.Error(err, "create workload for node failed", "node", node.Name)
-		return nil, err
-	}
-
-	logger.Info("created workload for node successfully", "node", node.Name, "workload", pod.Name)
-
-	return &pod, nil
 }
 
 // CreateConfigMapForWorkflow ...
