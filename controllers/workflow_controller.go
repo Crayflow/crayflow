@@ -526,6 +526,27 @@ func (r *WorkflowReconciler) createWorkloadForNode(ctx context.Context, workflow
 	return &pod, nil
 }
 
+// TODO:
+func addOutputsProcessSidecar(workflow *devopsv1.Workflow, pod *v1.Pod) {
+	_ = &v1.Container{
+		Name:           "",
+		Image:          ToolsContainerImage,
+		Command:        nil,
+		Args:           nil,
+		WorkingDir:     "",
+		Ports:          nil,
+		EnvFrom:        nil,
+		Env:            nil,
+		Resources:      v1.ResourceRequirements{},
+		VolumeMounts:   nil,
+		VolumeDevices:  nil,
+		LivenessProbe:  nil,
+		ReadinessProbe: nil,
+		StartupProbe:   nil,
+		// serviceAccount for get or update variable configmap
+	}
+}
+
 func addEnvToNodeWorkload(workflow *devopsv1.Workflow, pod *v1.Pod, data map[string]string) {
 	workload := pod.Spec.Containers[0]
 

@@ -9,9 +9,12 @@ Workflow orchestration engine in k8s, same like Airflow or Argo-Workflow, but mo
 * Support `timeout` strategy for node
 * Support variable set and load
 
+### Doing Features
+* Node outputs
+* Support workflow `pause` and node `skip`
+
 ### TODO Features:
 * Support node condition trigger
-* Support workflow `pause` and node `skip`
 * Support workflow template
 * Support bash or python script
 * Support sub-workflow or workflow nesting
