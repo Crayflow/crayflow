@@ -42,8 +42,6 @@ spec:
             type: object
           spec:
             properties:
-              clear:
-                type: boolean
               creator:
                 type: string
               description:
@@ -51,6 +49,8 @@ spec:
               nodes:
                 items:
                   properties:
+                    condition:
+                      type: string
                     container:
                       properties:
                         args:
@@ -643,6 +643,41 @@ spec:
                     name:
                       minLength: 1
                       type: string
+                    outputs:
+                      properties:
+                        files:
+                          items:
+                            properties:
+                              name:
+                                minLength: 1
+                                type: string
+                              path:
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            - path
+                            type: object
+                          type: array
+                        variables:
+                          items:
+                            properties:
+                              name:
+                                minLength: 1
+                                type: string
+                              valueFrom:
+                                properties:
+                                  path:
+                                    type: string
+                                required:
+                                - path
+                                type: object
+                            required:
+                            - name
+                            - valueFrom
+                            type: object
+                          type: array
+                      type: object
                     timeout:
                       format: int64
                       type: integer
@@ -653,13 +688,37 @@ spec:
                 minItems: 1
                 type: array
               pause:
-                type: boolean
-              resets:
-                items:
-                  type: string
-                type: array
+                properties:
+                  nodes:
+                    items:
+                      type: string
+                    type: array
+                type: object
+              reset:
+                properties:
+                  clear:
+                    type: boolean
+                  nodes:
+                    items:
+                      type: string
+                    type: array
+                type: object
+              resume:
+                properties:
+                  nodes:
+                    items:
+                      type: string
+                    type: array
+                type: object
               serviceAccountName:
                 type: string
+              skip:
+                properties:
+                  nodes:
+                    items:
+                      type: string
+                    type: array
+                type: object
               vars:
                 items:
                   properties:
@@ -679,8 +738,6 @@ spec:
             type: object
           status:
             properties:
-              clear:
-                type: boolean
               historyNodes:
                 items:
                   properties:
@@ -747,10 +804,15 @@ spec:
                 type: string
               reason:
                 type: string
-              resets:
-                items:
-                  type: string
-                type: array
+              reset:
+                properties:
+                  clear:
+                    type: boolean
+                  nodes:
+                    items:
+                      type: string
+                    type: array
+                type: object
               runningCount:
                 type: integer
               runningNodes:
@@ -779,6 +841,20 @@ spec:
                   metadata:
                     type: object
                 type: object
+              variables:
+                items:
+                  properties:
+                    key:
+                      minLength: 1
+                      type: string
+                    value:
+                      minLength: 1
+                      type: string
+                  required:
+                  - key
+                  - value
+                  type: object
+                type: array
             required:
             - runningCount
             - total

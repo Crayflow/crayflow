@@ -147,10 +147,12 @@ type NodeOutputsSpec struct {
 type NodeOutputsVariableSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
-	Name      string `json:"name"`
-	ValueFrom struct {
-		Path string `json:"path"`
-	} `json:"valueFrom"`
+	Name      string    `json:"name"`
+	ValueFrom ValueFrom `json:"valueFrom"`
+}
+
+type ValueFrom struct {
+	Path string `json:"path"`
 }
 
 type NodeOutputsFileSpec struct {
